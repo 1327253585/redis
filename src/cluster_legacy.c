@@ -802,12 +802,13 @@ int clusterLockConfig(char *filename) {
 void deriveAnnouncedPorts(int *announced_tcp_port, int *announced_tls_port,
                           int *announced_cport) {
     /* Config overriding announced ports. */
+    // 监听的端口, 如果没指定的话,用 接收命令的端口
     *announced_tcp_port = server.cluster_announce_port ? 
                           server.cluster_announce_port : server.port;
     *announced_tls_port = server.cluster_announce_tls_port ? 
                           server.cluster_announce_tls_port : server.tls_port;
     /* Derive cluster bus port. */
-    if (server.cluster_announce_bus_port) {
+    if (server.cluster_announce_bus_port) {  
         *announced_cport = server.cluster_announce_bus_port;
     } else if (server.cluster_port) {
         *announced_cport = server.cluster_port;
@@ -1227,7 +1228,7 @@ static void clusterConnAcceptHandler(connection *conn) {
      * Initially the link->node pointer is set to NULL as we don't know
      * which node is, but the right node is references once we know the
      * node identity. */
-    link = createClusterLink(NULL);
+    link = createClusterLink(NULL);  // 创建一个和接收节点通信的link, 注意这里的是入站的link
     link->conn = conn;
     connSetPrivateData(conn, link);
 
@@ -1313,14 +1314,14 @@ clusterNode *createClusterNode(char *nodename, int flags) {
     clusterNode *node = zmalloc(sizeof(*node));
 
     if (nodename)
-        memcpy(node->name, nodename, CLUSTER_NAMELEN);
+        memcpy(node->name, nodename, CLUSTER_NAMELEN);    //指定了节点名称
     else
-        getRandomHexChars(node->name, CLUSTER_NAMELEN);
-    getRandomHexChars(node->shard_id, CLUSTER_NAMELEN);
-    node->ctime = mstime();
-    node->configEpoch = 0;
+        getRandomHexChars(node->name, CLUSTER_NAMELEN); // 名称信息 都是随机的
+    getRandomHexChars(node->shard_id, CLUSTER_NAMELEN); // 分片id 信息
+    node->ctime = mstime();  // 节点创建时间
+    node->configEpoch = 0;   // 默认配置纪元是0
     node->flags = flags;
-    memset(node->slots,0,sizeof(node->slots));
+    memset(node->slots,0,sizeof(node->slots)); 
     node->slot_info_pairs = NULL;
     node->slot_info_pairs_count = 0;
     node->numslots = 0;
@@ -1336,9 +1337,9 @@ clusterNode *createClusterNode(char *nodename, int flags) {
     memset(node->ip,0,sizeof(node->ip));
     node->hostname = sdsempty();
     node->human_nodename = sdsempty();
-    node->tcp_port = 0;
+    node->tcp_port = 0;  // 端口先都初始化为0
     node->cport = 0;
-    node->tls_port = 0;
+    node->tls_port = 0;  
     node->fail_reports = listCreate();
     node->voted_time = 0;
     node->orphaned_time = 0;
@@ -2715,12 +2716,14 @@ static clusterNode *getNodeFromLinkAndMsg(clusterLink *link, clusterMsg *hdr) {
  * was processed, otherwise 0 if the link was freed since the packet
  * processing lead to some inconsistency error (for instance a PONG
  * received from the wrong sender ID). */
+
+ // 开始
 int clusterProcessPacket(clusterLink *link) {
     clusterMsg *hdr = (clusterMsg*) link->rcvbuf;
     uint32_t totlen = ntohl(hdr->totlen);
     uint16_t type = ntohs(hdr->type);
     mstime_t now = mstime();
-
+    
     if (type < CLUSTERMSG_TYPE_COUNT)
         server.cluster->stats_bus_messages_received[type]++;
     serverLog(LL_DEBUG,"--- Processing packet of type %s, %lu bytes",
@@ -2747,7 +2750,7 @@ int clusterProcessPacket(clusterLink *link) {
     clusterNode *sender;
 
     if (type == CLUSTERMSG_TYPE_PING || type == CLUSTERMSG_TYPE_PONG ||
-        type == CLUSTERMSG_TYPE_MEET)
+        type == CLUSTERMSG_TYPE_MEET)   // PING  PONG 和 加入集群的消息
     {
         uint16_t count = ntohs(hdr->count);
 
@@ -2806,7 +2809,7 @@ int clusterProcessPacket(clusterLink *link) {
             clusterGetMessageTypeString(type), (unsigned long long) totlen, (unsigned long long) explen);
         return 1;
     }
-
+    // 从消息获取发送节点信息
     sender = getNodeFromLinkAndMsg(link, hdr);
     if (sender && (hdr->mflags[0] & CLUSTERMSG_FLAG0_EXT_DATA)) {
         sender->flags |= CLUSTER_NODE_EXTENSIONS_SUPPORTED;
@@ -2818,21 +2821,21 @@ int clusterProcessPacket(clusterLink *link) {
      * because of Pub/Sub. */
     if (sender) sender->data_received = now;
 
-    if (sender && !nodeInHandshake(sender)) {
+    if (sender && !nodeInHandshake(sender)) { // 还在和sender 握手
         /* Update our currentEpoch if we see a newer epoch in the cluster. */
-        senderCurrentEpoch = ntohu64(hdr->currentEpoch);
-        senderConfigEpoch = ntohu64(hdr->configEpoch);
+        senderCurrentEpoch = ntohu64(hdr->currentEpoch);  // sender 视角的集群纪元
+        senderConfigEpoch = ntohu64(hdr->configEpoch);   // sender视角的配置纪元 
         if (senderCurrentEpoch > server.cluster->currentEpoch)
-            server.cluster->currentEpoch = senderCurrentEpoch;
+            server.cluster->currentEpoch = senderCurrentEpoch;   // 如果sender的集群纪元比当前节点的纪元大,则已更新当前节点的集群纪元
         /* Update the sender configEpoch if it is publishing a newer one. */
-        if (senderConfigEpoch > sender->configEpoch) {
-            sender->configEpoch = senderConfigEpoch;
+        if (senderConfigEpoch > sender->configEpoch) { // 如果配置纪元比当前节点的大, 也同步更新
+            sender->configEpoch = senderConfigEpoch; 
             clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
-                                 CLUSTER_TODO_FSYNC_CONFIG);
+                                 CLUSTER_TODO_FSYNC_CONFIG);  // 同时在cluster的before事件里进行更新
         }
         /* Update the replication offset info for this node. */
-        sender->repl_offset = ntohu64(hdr->offset);
-        sender->repl_offset_time = now;
+        sender->repl_offset = ntohu64(hdr->offset);  // 记录发送方的 offset
+        sender->repl_offset_time = now;              // 记录发送方的接收表offset的his见
         /* If we are a slave performing a manual failover and our master
          * sent its offset while already paused, populate the MF state. */
         if (server.cluster->mf_end &&
@@ -2851,6 +2854,8 @@ int clusterProcessPacket(clusterLink *link) {
     }
 
     /* Initial processing of PING and MEET requests replying with a PONG. */
+
+    // 握手成功后
     if (type == CLUSTERMSG_TYPE_PING || type == CLUSTERMSG_TYPE_MEET) {
         /* We use incoming MEET messages in order to set the address
          * for 'myself', since only other cluster nodes will send us
@@ -2882,13 +2887,17 @@ int clusterProcessPacket(clusterLink *link) {
          * In this stage we don't try to add the node with the right
          * flags, slaveof pointer, and so forth, as this details will be
          * resolved when we'll receive PONGs from the node. */
+
+         // 首次加入集群时, sender 为空
         if (!sender && type == CLUSTERMSG_TYPE_MEET) {
             clusterNode *node;
-
+            // 创建集群节点,  flag为握手中
             node = createClusterNode(NULL,CLUSTER_NODE_HANDSHAKE);
             serverAssert(nodeIp2String(node->ip,link,hdr->myip) == C_OK);
+            // 获取对方节点的ip 和端口
             getClientPortFromClusterMsg(hdr, &node->tls_port, &node->tcp_port);
             node->cport = ntohs(hdr->cport);
+            // 把当前节点加入到集群
             clusterAddNode(node);
             clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
         }
@@ -2896,10 +2905,13 @@ int clusterProcessPacket(clusterLink *link) {
         /* If this is a MEET packet from an unknown node, we still process
          * the gossip section here since we have to trust the sender because
          * of the message type. */
+
+         // 首次进行消息处理
         if (!sender && type == CLUSTERMSG_TYPE_MEET)
             clusterProcessGossipSection(hdr,link);
 
         /* Anyway reply with a PONG */
+        // 恢复消息
         clusterSendPing(link,CLUSTERMSG_TYPE_PONG);
     }
 
@@ -2910,8 +2922,8 @@ int clusterProcessPacket(clusterLink *link) {
         serverLog(LL_DEBUG,"%s packet received: %.40s",
             clusterGetMessageTypeString(type),
             link->node ? link->node->name : "NULL");
-        if (!link->inbound) {
-            if (nodeInHandshake(link->node)) {
+        if (!link->inbound) {  // 非入站链接
+            if (nodeInHandshake(link->node)) { // 在握手中
                 /* If we already have this node, try to change the
                  * IP/port of the node with the new one. */
                 if (sender) {
@@ -2931,10 +2943,13 @@ int clusterProcessPacket(clusterLink *link) {
 
                 /* First thing to do is replacing the random name with the
                  * right node name if this was a handshake stage. */
+                 // 更新节点的node名称
                 clusterRenameNode(link->node, hdr->sender);
                 serverLog(LL_DEBUG,"Handshake with node %.40s completed.",
                     link->node->name);
+                    // 去掉握手抓国泰
                 link->node->flags &= ~CLUSTER_NODE_HANDSHAKE;
+                // 更新追从状态
                 link->node->flags |= flags&(CLUSTER_NODE_MASTER|CLUSTER_NODE_SLAVE);
                 clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
             } else if (memcmp(link->node->name,hdr->sender,
@@ -2964,6 +2979,8 @@ int clusterProcessPacket(clusterLink *link) {
          * be propagated because the slave ranking used to understand the
          * delay of each slave in the voting process, needs to know
          * what are the instances really competing. */
+
+         // 更新发送方的故障标识
         if (sender) {
             int nofailover = flags & CLUSTER_NODE_NOFAILOVER;
             sender->flags &= ~CLUSTER_NODE_NOFAILOVER;
@@ -2990,11 +3007,12 @@ int clusterProcessPacket(clusterLink *link) {
              *
              * The FAIL condition is also reversible under specific
              * conditions detected by clearNodeFailureIfNeeded(). */
+             // 和节点通信超时, 将节点表示为 主观下线
             if (nodeTimedOut(link->node)) {
                 link->node->flags &= ~CLUSTER_NODE_PFAIL;
                 clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG|
                                      CLUSTER_TODO_UPDATE_STATE);
-            } else if (nodeFailed(link->node)) {
+            } else if (nodeFailed(link->node)) {  // 收到节点信息,则删除故障的信息
                 clearNodeFailureIfNeeded(link->node);
             }
         }
@@ -3003,16 +3021,18 @@ int clusterProcessPacket(clusterLink *link) {
         if (sender) {
             if (!memcmp(hdr->slaveof,CLUSTER_NODE_NULL_NAME,
                 sizeof(hdr->slaveof)))
-            {
+            {  // 当前节点不是任何节点的从节点, 则把当前节点标记为主接地啊
                 /* Node is a master. */
                 clusterSetNodeAsMaster(sender);
-            } else {
+            } else { // 当前节点是从节点
                 /* Node is a slave. */
+                // 查找主节点信息
                 clusterNode *master = clusterLookupNode(hdr->slaveof, CLUSTER_NAMELEN);
 
-                if (clusterNodeIsMaster(sender)) {
+                if (clusterNodeIsMaster(sender)) { // 如果当前节点就是主节点
                     /* Master turned into a slave! Reconfigure the node. */
-                    if (master && !memcmp(master->shard_id, sender->shard_id, CLUSTER_NAMELEN)) {
+                    // 主从切换了, 因为分片id 是一样的
+                    if (master && !memcmp(master->shard_id, sender->shard_id, CLUSTER_NAMELEN)) {  // 
                         /* `sender` was a primary and was in the same shard as `master`, its new primary */
                         if (sender->configEpoch > senderConfigEpoch) {
                             serverLog(LL_NOTICE,
@@ -3026,8 +3046,11 @@ int clusterProcessPacket(clusterLink *link) {
                         } else {
                             /* A failover occurred in the shard where `sender` belongs to and `sender` is no longer
                              * a primary. Update slot assignment to `master`, which is the new primary in the shard */
+
+                             // 把发送节点管理的槽位信息指派给master 管理
                             int slots = clusterMoveNodeSlots(sender, master);
                             /* `master` is still a `slave` in this observer node's view; update its role and configEpoch */
+                            // 把master 设置为master节点
                             clusterSetNodeAsMaster(master);
                             master->configEpoch = senderConfigEpoch;
                             serverLog(LL_NOTICE, "A failover occurred in shard %.40s; node %.40s (%s)"
@@ -3040,9 +3063,9 @@ int clusterProcessPacket(clusterLink *link) {
                                     master->human_nodename,
                                     (unsigned long long) master->configEpoch);
                         }
-                    } else {
+                    } else { //  sender 是其他节点的从节点了
                         /* `sender` was moved to another shard and has become a replica, remove its slot assignment */
-                        int slots = clusterDelNodeSlots(sender);
+                        int slots = clusterDelNodeSlots(sender); // 删除当前节点管理的曹伟伟信息
                         serverLog(LL_NOTICE, "Node %.40s (%s) is no longer master of shard %.40s;"
                                 " removed all %d slot(s) it used to own",
                                 sender->name,
@@ -3056,8 +3079,12 @@ int clusterProcessPacket(clusterLink *link) {
                                    master->shard_id);
                         }
                     }
+                    // 去掉发送节点的master 信息
+                    // 以及节点的迁移信息
                     sender->flags &= ~(CLUSTER_NODE_MASTER|
                                        CLUSTER_NODE_MIGRATE_TO);
+
+                                       // 标记为从节点
                     sender->flags |= CLUSTER_NODE_SLAVE;
 
                     /* Update config and state. */
@@ -3066,18 +3093,19 @@ int clusterProcessPacket(clusterLink *link) {
                 }
 
                 /* Master node changed for this slave? */
+                // 是从节点当时, 主节点发生了变化
                 if (master && sender->slaveof != master) {
-                    if (sender->slaveof)
+                    if (sender->slaveof)  // 移除老的master
                         clusterNodeRemoveSlave(sender->slaveof,sender);
-                    clusterNodeAddSlave(master,sender);
+                    clusterNodeAddSlave(master,sender); // 把新的master 加入到集群
                     sender->slaveof = master;
 
                     /* Update the shard_id when a replica is connected to its
                      * primary in the very first time. */
-                    updateShardId(sender, master->shard_id);
+                    updateShardId(sender, master->shard_id);  // 把从节点的分片id修正和主节点一样
 
                     /* Update config. */
-                    clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG);
+                    clusterDoBeforeSleep(CLUSTER_TODO_SAVE_CONFIG); 
                 }
             }
         }
@@ -3384,6 +3412,9 @@ void clusterLinkConnectHandler(connection *conn) {
 /* Read data. Try to read the first field of the header first to check the
  * full length of the packet. When a whole packet is in memory this function
  * will call the function to process the packet. And so forth. */
+
+
+ // 从集群内读取消息
 void clusterReadHandler(connection *conn) {
     clusterMsg buf[1];
     ssize_t nread;
@@ -3393,14 +3424,14 @@ void clusterReadHandler(connection *conn) {
 
     while(1) { /* Read as long as there is data to read. */
         rcvbuflen = link->rcvbuf_len;
-        if (rcvbuflen < 8) {
+        if (rcvbuflen < 8) { // 先对8个字节, 消息头和 消息长度
             /* First, obtain the first 8 bytes to get the full message
              * length. */
             readlen = 8 - rcvbuflen;
         } else {
             /* Finally read the full message. */
-            hdr = (clusterMsg*) link->rcvbuf;
-            if (rcvbuflen == 8) {
+            hdr = (clusterMsg*) link->rcvbuf;  // 直接类型强转换
+            if (rcvbuflen == 8) {   // 消息头验证
                 /* Perform some sanity check on the message signature
                  * and length. */
                 if (memcmp(hdr->sig,"RCmb",4) != 0 ||
@@ -3421,10 +3452,11 @@ void clusterReadHandler(connection *conn) {
                     return;
                 }
             }
+            // 剩余需要读取的长度
             readlen = ntohl(hdr->totlen) - rcvbuflen;
             if (readlen > sizeof(buf)) readlen = sizeof(buf);
         }
-
+        // 尝试剩余消息
         nread = connRead(conn,buf,readlen);
         if (nread == -1 && (connGetState(conn) == CONN_STATE_CONNECTED)) return; /* No more data ready. */
 
@@ -3436,6 +3468,7 @@ void clusterReadHandler(connection *conn) {
             return;
         } else {
             /* Read data and recast the pointer to the new buffer. */
+            // 能读取的最大数据
             size_t unused = link->rcvbuf_alloc - link->rcvbuf_len;
             if ((size_t)nread > unused) {
                 size_t required = link->rcvbuf_len + nread;
@@ -3452,8 +3485,9 @@ void clusterReadHandler(connection *conn) {
         }
 
         /* Total length obtained? Process this packet. */
+        // 整个消息都读取完了
         if (rcvbuflen >= 8 && rcvbuflen == ntohl(hdr->totlen)) {
-            if (clusterProcessPacket(link)) {
+            if (clusterProcessPacket(link)) {  // 处理集群包消息
                 if (link->rcvbuf_alloc > RCVBUF_INIT_LEN) {
                     size_t prev_rcvbuf_alloc = link->rcvbuf_alloc;
                     zfree(link->rcvbuf);
@@ -6496,6 +6530,7 @@ int clusterAllowFailoverCmd(client *c) {
     return 0;
 }
 
+// 把当前节点提升为master节点
 void clusterPromoteSelfToMaster(void) {
     replicationUnsetMaster();
 }
